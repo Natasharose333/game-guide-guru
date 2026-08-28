@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { coachFrame, speakLine, type CoachResult } from "@/lib/coach.functions";
+import { createBackgroundTimer } from "@/lib/background-timer";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -43,7 +44,7 @@ function Index() {
   const backoffRef = useRef(0);
 
   const [live, setLive] = useState(false);
-  const [intervalSec, setIntervalSec] = useState(6);
+  const [intervalSec, setIntervalSec] = useState(10);
   const [lowImpact, setLowImpact] = useState(true);
   const [voice, setVoice] = useState(true);
   const [current, setCurrent] = useState<CoachResult | null>(null);
@@ -68,11 +69,22 @@ function Index() {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         // 1 fps capture: enough for sampling, far cheaper on the GPU/encoder
-        video: { frameRate: { ideal: 1, max: 2 } },
+        video: { frameRate: { ideal: 1, max: 1 }, width: { max: 1280 } },
         audio: false,
       });
       streamRef.current = stream;
-      stream.getVideoTracks()[0]?.addEventListener("ended", () => stop());
+      const track = stream.getVideoTracks()[0];
+      track?.addEventListener("ended", () => stop());
+      // Force the capture pipeline down even if the picker ignored our hints —
+      // remote play already eats encode bandwidth on this laptop.
+      try {
+        await track?.applyConstraints({
+          frameRate: { max: 1 },
+          width: { max: lowImpact ? 960 : 1280 },
+        });
+      } catch {
+        /* constraint unsupported on this source */
+      }
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -81,7 +93,8 @@ function Index() {
     } catch {
       setError("Screen share was cancelled or blocked.");
     }
-  }, [stop]);
+  }, [stop, lowImpact]);
+
 
   const speak = useCallback(
     async (text: string) => {
@@ -116,12 +129,13 @@ function Index() {
     busyRef.current = true;
     setThinking(true);
     try {
-      const w = lowImpact ? 768 : 1024;
+      const w = lowImpact ? 640 : 1024;
       const h = Math.round((video.videoHeight / video.videoWidth) * w);
       canvas.width = w;
       canvas.height = h;
       canvas.getContext("2d")?.drawImage(video, 0, 0, w, h);
-      const frame = canvas.toDataURL("image/jpeg", lowImpact ? 0.55 : 0.7);
+      const frame = canvas.toDataURL("image/jpeg", lowImpact ? 0.5 : 0.7);
+
 
       const result = await analyze({
         data: { frame, knownGame: gameRef.current, recent: recentRef.current },
@@ -169,12 +183,18 @@ function Index() {
     }
   }, [analyze, lowImpact, speak, intervalSec]);
 
+  const tickRef = useRef(tick);
+  useEffect(() => {
+    tickRef.current = tick;
+  }, [tick]);
+
   useEffect(() => {
     if (!live) return;
-    void tick();
-    const id = setInterval(() => void tick(), intervalSec * 1000);
-    return () => clearInterval(id);
-  }, [live, intervalSec, tick]);
+    void tickRef.current();
+    // worker-driven so sampling keeps going while the Xbox app window has focus
+    return createBackgroundTimer(() => void tickRef.current(), intervalSec * 1000);
+  }, [live, intervalSec]);
+
 
   useEffect(() => () => stop(), [stop]);
 
@@ -203,7 +223,7 @@ function Index() {
                 onChange={(e) => setIntervalSec(Number(e.target.value))}
                 className="ml-2 rounded-md border border-border bg-card px-2 py-1 text-sm text-foreground"
               >
-                {[3, 5, 6, 8, 12, 20, 30].map((s) => (
+                {[6, 8, 10, 15, 20, 30].map((s) => (
                   <option key={s} value={s}>
                     {s}s
                   </option>
@@ -242,6 +262,17 @@ function Index() {
             </button>
           </div>
         </header>
+
+        {live && (
+          <p className="mt-5 rounded-lg border border-accent/40 bg-accent/5 px-4 py-3 text-sm text-foreground/85">
+            <strong className="font-semibold text-accent">Click back into the Xbox app window now.</strong>{" "}
+            Your controller only reaches the game while that window has focus — if this
+            browser tab is focused, buttons like drawing a weapon get swallowed. Sidekick
+            keeps watching and talking in the background.
+          </p>
+        )}
+
+
 
         <section className="mt-8 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
           <div className="flex flex-col gap-5">
