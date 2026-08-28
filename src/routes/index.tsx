@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { coachFrame, speakLine, type CoachResult } from "@/lib/coach.functions";
+import { createBackgroundTimer } from "@/lib/background-timer";
 
 export const Route = createFileRoute("/")({
   head: () => ({
