@@ -44,7 +44,7 @@ function Index() {
   const backoffRef = useRef(0);
 
   const [live, setLive] = useState(false);
-  const [intervalSec, setIntervalSec] = useState(6);
+  const [intervalSec, setIntervalSec] = useState(10);
   const [lowImpact, setLowImpact] = useState(true);
   const [voice, setVoice] = useState(true);
   const [current, setCurrent] = useState<CoachResult | null>(null);
