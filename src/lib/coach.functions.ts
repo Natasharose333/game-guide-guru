@@ -137,7 +137,7 @@ const SpeakInput = z.object({ text: z.string().min(1).max(600) });
 /** Returns base64 mp3 for the given line. */
 export const speakLine = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SpeakInput.parse(input))
-  .handler(async ({ data }): Promise<{ audio: string }> => {
+  .handler(async ({ data }): Promise<{ audio: string | null }> => {
     const key = process.env["LOVABLE_API_KEY"];
     if (!key) throw new Error("Missing LOVABLE_API_KEY");
 
@@ -157,8 +157,9 @@ export const speakLine = createServerFn({ method: "POST" })
     });
 
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`TTS_${res.status}: ${body.slice(0, 200)}`);
+      // Rate limited / out of credits: let the client fall back to browser speech.
+      await res.text().catch(() => "");
+      return { audio: null };
     }
 
     const buf = new Uint8Array(await res.arrayBuffer());
