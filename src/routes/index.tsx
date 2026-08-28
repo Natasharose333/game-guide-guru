@@ -39,6 +39,8 @@ function Index() {
   const recentRef = useRef<string[]>([]);
   const spokenRef = useRef<string>("");
   const voiceRef = useRef(true);
+  const cooldownRef = useRef(0);
+  const backoffRef = useRef(0);
 
   const [live, setLive] = useState(false);
   const [intervalSec, setIntervalSec] = useState(6);
@@ -87,6 +89,7 @@ function Index() {
       spokenRef.current = text;
       try {
         const { audio } = await tts({ data: { text } });
+        if (!audio) throw new Error("no-audio");
         const el = audioRef.current ?? new Audio();
         audioRef.current = el;
         el.src = `data:audio/mpeg;base64,${audio}`;
@@ -108,6 +111,8 @@ function Index() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || busyRef.current || video.videoWidth === 0) return;
+    // backoff after a rate limit: skip ticks until the cooldown passes
+    if (Date.now() < cooldownRef.current) return;
     busyRef.current = true;
     setThinking(true);
     try {
@@ -122,6 +127,21 @@ function Index() {
         data: { frame, knownGame: gameRef.current, recent: recentRef.current },
       });
 
+      if (result.error) {
+        if (result.error === "rate_limited") {
+          const wait = Math.min(60, Math.max(intervalSec * 2, 10 * (backoffRef.current + 1)));
+          backoffRef.current += 1;
+          cooldownRef.current = Date.now() + wait * 1000;
+          setError(`Rate limited — pausing ${wait}s, then retrying automatically.`);
+        } else if (result.error === "no_credits") {
+          cooldownRef.current = Date.now() + 60_000;
+          setError("Out of AI credits. Add credits in Lovable to keep coaching.");
+        } else {
+          setError("Couldn't read that frame.");
+        }
+        return;
+      }
+      backoffRef.current = 0;
       gameRef.current = result.game !== "Unknown" ? result.game : gameRef.current;
       recentRef.current = [...recentRef.current, result.action].slice(-4);
       setCurrent(result);
@@ -141,20 +161,13 @@ function Index() {
       );
       setError(null);
       void speak(result.danger ? `${result.danger}. ${result.action}` : result.action);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(
-        msg.includes("AI_429")
-          ? "Rate limited — slowing down. Try a longer interval."
-          : msg.includes("AI_402")
-            ? "Out of AI credits. Add credits in Lovable to keep coaching."
-            : "Couldn't read that frame.",
-      );
+    } catch {
+      setError("Couldn't reach the coach. Retrying on the next tick.");
     } finally {
       busyRef.current = false;
       setThinking(false);
     }
-  }, [analyze, lowImpact, speak]);
+  }, [analyze, lowImpact, speak, intervalSec]);
 
   useEffect(() => {
     if (!live) return;

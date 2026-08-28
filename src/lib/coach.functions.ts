@@ -11,6 +11,8 @@ const CoachInput = z.object({
 });
 
 export type CoachResult = {
+  /** set when the gateway refused the call (rate limit / credits) */
+  error?: "rate_limited" | "no_credits" | "failed";
   game: string;
   confidence: number;
   location: string;
@@ -72,8 +74,25 @@ export const coachFrame = createServerFn({ method: "POST" })
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`AI_${res.status}: ${body.slice(0, 300)}`);
+      await res.text().catch(() => "");
+      return {
+        error:
+          res.status === 429 ? "rate_limited" : res.status === 402 ? "no_credits" : "failed",
+        game: data.knownGame ?? "Unknown",
+        confidence: 0,
+        location: "—",
+        stats: [],
+        objective: "—",
+        progress: "—",
+        steps: [],
+        action:
+          res.status === 429
+            ? "Busy — retrying shortly"
+            : res.status === 402
+              ? "Out of AI credits"
+              : "Couldn't read that frame",
+        danger: null,
+      };
     }
 
     const json = (await res.json()) as {
@@ -118,7 +137,7 @@ const SpeakInput = z.object({ text: z.string().min(1).max(600) });
 /** Returns base64 mp3 for the given line. */
 export const speakLine = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SpeakInput.parse(input))
-  .handler(async ({ data }): Promise<{ audio: string }> => {
+  .handler(async ({ data }): Promise<{ audio: string | null }> => {
     const key = process.env["LOVABLE_API_KEY"];
     if (!key) throw new Error("Missing LOVABLE_API_KEY");
 
@@ -138,8 +157,9 @@ export const speakLine = createServerFn({ method: "POST" })
     });
 
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`TTS_${res.status}: ${body.slice(0, 200)}`);
+      // Rate limited / out of credits: let the client fall back to browser speech.
+      await res.text().catch(() => "");
+      return { audio: null };
     }
 
     const buf = new Uint8Array(await res.arrayBuffer());
