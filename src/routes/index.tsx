@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { coachFrame, speakLine, type CoachResult } from "@/lib/coach.functions";
+import { askCoach, coachFrame, speakLine, type CoachResult } from "@/lib/coach.functions";
 import { createBackgroundTimer } from "@/lib/background-timer";
 
 export const Route = createFileRoute("/")({
@@ -28,11 +28,30 @@ export const Route = createFileRoute("/")({
 
 type LogEntry = CoachResult & { id: number; at: string };
 
+/** How different two frames must be (0-1) before we spend an analysis call. */
+const SENSITIVITY = {
+  high: 0.02,
+  medium: 0.05,
+  low: 0.1,
+} as const;
+type Sensitivity = keyof typeof SENSITIVITY;
+
+/** Cheap scene-change detector: 64x36 grayscale fingerprint compared frame to frame. */
+const PROBE_W = 64;
+const PROBE_H = 36;
+/** Never analyze more often than this, no matter how much moves. */
+const MIN_GAP_MS = 4000;
+/** How often we run the (very cheap) local change probe. */
+const PROBE_MS = 1200;
+
 function Index() {
   const analyze = useServerFn(coachFrame);
+  const ask = useServerFn(askCoach);
   const tts = useServerFn(speakLine);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const probeRef = useRef<HTMLCanvasElement | null>(null);
+  const prevProbeRef = useRef<Uint8Array | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const busyRef = useRef(false);
@@ -42,25 +61,38 @@ function Index() {
   const voiceRef = useRef(true);
   const cooldownRef = useRef(0);
   const backoffRef = useRef(0);
+  const lastAnalyzeRef = useRef(0);
+  const goalRef = useRef("");
 
   const [live, setLive] = useState(false);
-  const [intervalSec, setIntervalSec] = useState(10);
+  const [maxGapSec, setMaxGapSec] = useState(20);
+  const [sensitivity, setSensitivity] = useState<Sensitivity>("medium");
   const [lowImpact, setLowImpact] = useState(true);
   const [voice, setVoice] = useState(true);
   const [current, setCurrent] = useState<CoachResult | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
+  const [change, setChange] = useState(0);
+
+  const [goal, setGoal] = useState("");
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
 
   useEffect(() => {
     voiceRef.current = voice;
   }, [voice]);
+  useEffect(() => {
+    goalRef.current = goal.trim();
+  }, [goal]);
 
   const stop = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     audioRef.current?.pause();
     window.speechSynthesis?.cancel();
+    prevProbeRef.current = null;
     setLive(false);
   }, []);
 
@@ -89,12 +121,13 @@ function Index() {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
+      prevProbeRef.current = null;
+      lastAnalyzeRef.current = 0;
       setLive(true);
     } catch {
       setError("Screen share was cancelled or blocked.");
     }
   }, [stop, lowImpact]);
-
 
   const speak = useCallback(
     async (text: string) => {
@@ -120,30 +153,40 @@ function Index() {
     [tts],
   );
 
-  const tick = useCallback(async () => {
+  /** Grabs a full-size JPEG of the current video frame. */
+  const grabFrame = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || busyRef.current || video.videoWidth === 0) return;
-    // backoff after a rate limit: skip ticks until the cooldown passes
+    if (!video || !canvas || video.videoWidth === 0) return null;
+    const w = lowImpact ? 640 : 1024;
+    const h = Math.round((video.videoHeight / video.videoWidth) * w);
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext("2d")?.drawImage(video, 0, 0, w, h);
+    return canvas.toDataURL("image/jpeg", lowImpact ? 0.5 : 0.7);
+  }, [lowImpact]);
+
+  const runAnalysis = useCallback(async () => {
+    if (busyRef.current) return;
     if (Date.now() < cooldownRef.current) return;
+    const frame = grabFrame();
+    if (!frame) return;
     busyRef.current = true;
+    lastAnalyzeRef.current = Date.now();
     setThinking(true);
     try {
-      const w = lowImpact ? 640 : 1024;
-      const h = Math.round((video.videoHeight / video.videoWidth) * w);
-      canvas.width = w;
-      canvas.height = h;
-      canvas.getContext("2d")?.drawImage(video, 0, 0, w, h);
-      const frame = canvas.toDataURL("image/jpeg", lowImpact ? 0.5 : 0.7);
-
-
       const result = await analyze({
-        data: { frame, knownGame: gameRef.current, recent: recentRef.current },
+        data: {
+          frame,
+          knownGame: gameRef.current,
+          recent: recentRef.current,
+          goal: goalRef.current || null,
+        },
       });
 
       if (result.error) {
         if (result.error === "rate_limited") {
-          const wait = Math.min(60, Math.max(intervalSec * 2, 10 * (backoffRef.current + 1)));
+          const wait = Math.min(60, Math.max(10, 10 * (backoffRef.current + 1)));
           backoffRef.current += 1;
           cooldownRef.current = Date.now() + wait * 1000;
           setError(`Rate limited — pausing ${wait}s, then retrying automatically.`);
@@ -176,27 +219,92 @@ function Index() {
       setError(null);
       void speak(result.danger ? `${result.danger}. ${result.action}` : result.action);
     } catch {
-      setError("Couldn't reach the coach. Retrying on the next tick.");
+      setError("Couldn't reach the coach. Retrying on the next change.");
     } finally {
       busyRef.current = false;
       setThinking(false);
+      lastAnalyzeRef.current = Date.now();
     }
-  }, [analyze, lowImpact, speak, intervalSec]);
+  }, [analyze, grabFrame, speak]);
 
-  const tickRef = useRef(tick);
+  /**
+   * Cheap local probe: downscale the frame to 64x36, compare with the previous
+   * fingerprint, and only spend an AI call when the scene actually changed
+   * (or when the heartbeat interval has elapsed).
+   */
+  const probe = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = probeRef.current;
+    if (!video || !canvas || video.videoWidth === 0) return;
+    canvas.width = PROBE_W;
+    canvas.height = PROBE_H;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, PROBE_W, PROBE_H);
+    const { data: px } = ctx.getImageData(0, 0, PROBE_W, PROBE_H);
+    const gray = new Uint8Array(PROBE_W * PROBE_H);
+    for (let i = 0, p = 0; i < px.length; i += 4, p++) {
+      gray[p] = (px[i]! * 299 + px[i + 1]! * 587 + px[i + 2]! * 114) / 1000;
+    }
+
+    const prev = prevProbeRef.current;
+    prevProbeRef.current = gray;
+    const since = Date.now() - lastAnalyzeRef.current;
+
+    if (!prev) {
+      void runAnalysis();
+      return;
+    }
+    let sum = 0;
+    for (let i = 0; i < gray.length; i++) sum += Math.abs(gray[i]! - prev[i]!);
+    const diff = sum / gray.length / 255;
+    setChange(diff);
+
+    const changed = diff >= SENSITIVITY[sensitivity];
+    const heartbeat = since >= maxGapSec * 1000;
+    if ((changed && since >= MIN_GAP_MS) || heartbeat) void runAnalysis();
+  }, [runAnalysis, sensitivity, maxGapSec]);
+
+  const probeFnRef = useRef(probe);
   useEffect(() => {
-    tickRef.current = tick;
-  }, [tick]);
+    probeFnRef.current = probe;
+  }, [probe]);
 
   useEffect(() => {
     if (!live) return;
-    void tickRef.current();
     // worker-driven so sampling keeps going while the Xbox app window has focus
-    return createBackgroundTimer(() => void tickRef.current(), intervalSec * 1000);
-  }, [live, intervalSec]);
-
+    return createBackgroundTimer(() => probeFnRef.current(), PROBE_MS);
+  }, [live]);
 
   useEffect(() => () => stop(), [stop]);
+
+  const submitQuestion = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      const q = question.trim();
+      if (!q || asking) return;
+      setAsking(true);
+      setAnswer(null);
+      try {
+        const res = await ask({
+          data: {
+            frame: grabFrame(),
+            question: q,
+            knownGame: gameRef.current,
+            goal: goalRef.current || null,
+          },
+        });
+        setAnswer(res.answer);
+        spokenRef.current = "";
+        void speak(res.answer);
+      } catch {
+        setAnswer("Couldn't reach the coach — try again.");
+      } finally {
+        setAsking(false);
+      }
+    },
+    [ask, asking, grabFrame, question, speak],
+  );
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -211,19 +319,31 @@ function Index() {
               Sidekick
             </h1>
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              Share your game window. Sidekick reads your stats, tracks where you are, and
-              speaks the next step every {intervalSec}s.
+              Share your game window. Sidekick only spends an AI call when the scene
+              actually changes, and checks in at least every {maxGapSec}s.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <label className="text-xs uppercase tracking-widest text-muted-foreground">
-              Every
+              Trigger
               <select
-                value={intervalSec}
-                onChange={(e) => setIntervalSec(Number(e.target.value))}
+                value={sensitivity}
+                onChange={(e) => setSensitivity(e.target.value as Sensitivity)}
                 className="ml-2 rounded-md border border-border bg-card px-2 py-1 text-sm text-foreground"
               >
-                {[6, 8, 10, 15, 20, 30].map((s) => (
+                <option value="high">Any change</option>
+                <option value="medium">Real changes</option>
+                <option value="low">Big changes</option>
+              </select>
+            </label>
+            <label className="text-xs uppercase tracking-widest text-muted-foreground">
+              Check-in
+              <select
+                value={maxGapSec}
+                onChange={(e) => setMaxGapSec(Number(e.target.value))}
+                className="ml-2 rounded-md border border-border bg-card px-2 py-1 text-sm text-foreground"
+              >
+                {[10, 15, 20, 30, 45, 60].map((s) => (
                   <option key={s} value={s}>
                     {s}s
                   </option>
@@ -272,8 +392,6 @@ function Index() {
           </p>
         )}
 
-
-
         <section className="mt-8 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
           <div className="flex flex-col gap-5">
             <div className="overflow-hidden rounded-xl border border-border bg-card shadow-[var(--shadow-panel)]">
@@ -285,7 +403,11 @@ function Index() {
                   <span
                     className={`h-2 w-2 rounded-full ${live ? "animate-pulse bg-accent" : "bg-border"}`}
                   />
-                  {live ? (thinking ? "analyzing" : "watching") : "idle"}
+                  {live
+                    ? thinking
+                      ? "analyzing"
+                      : `watching · scene change ${Math.round(change * 100)}%`
+                    : "idle"}
                 </span>
               </div>
               <div className="relative aspect-video bg-black">
@@ -307,6 +429,54 @@ function Index() {
 
             <div className="rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-panel)]">
               <p className="font-display text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                your goal (optional)
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Going off the main story? Tell Sidekick what you're actually trying to do
+                and it plans toward that instead.
+              </p>
+              <textarea
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                rows={2}
+                placeholder="e.g. Farm gold for the best sword, then find all the shrines in this region"
+                className="mt-3 w-full resize-none rounded-lg border border-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-accent/60"
+              />
+              {goal.trim() && (
+                <p className="mt-2 text-xs text-accent">
+                  Coaching toward your goal instead of the default objective.
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-panel)]">
+              <p className="font-display text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                ask your sidekick
+              </p>
+              <form onSubmit={submitQuestion} className="mt-3 flex gap-2">
+                <input
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  placeholder="Where do I find the key for this door?"
+                  className="flex-1 rounded-lg border border-border bg-background/40 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:border-accent/60"
+                />
+                <button
+                  type="submit"
+                  disabled={asking || !question.trim()}
+                  className="font-display rounded-md bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-widest text-primary-foreground disabled:opacity-40"
+                >
+                  {asking ? "…" : "Ask"}
+                </button>
+              </form>
+              {answer && (
+                <p className="mt-3 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-sm text-foreground/90">
+                  {answer}
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-panel)]">
+              <p className="font-display text-xs uppercase tracking-[0.3em] text-muted-foreground">
                 your stats
               </p>
               {current?.stats.length ? (
@@ -324,9 +494,7 @@ function Index() {
                   ))}
                 </div>
               ) : (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  No HUD readings yet.
-                </p>
+                <p className="mt-2 text-sm text-muted-foreground">No HUD readings yet.</p>
               )}
             </div>
           </div>
@@ -373,19 +541,26 @@ function Index() {
                   ))}
                 </ol>
               ) : null}
-              <button
-                onClick={() => {
-                  if (!current) return;
-                  spokenRef.current = "";
-                  void speak(
-                    [current.action, ...current.steps].filter(Boolean).join(". "),
-                  );
-                }}
-                disabled={!current}
-                className="mt-4 rounded-md border border-border px-3 py-1.5 text-xs uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-              >
-                Read steps aloud
-              </button>
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => {
+                    if (!current) return;
+                    spokenRef.current = "";
+                    void speak([current.action, ...current.steps].filter(Boolean).join(". "));
+                  }}
+                  disabled={!current}
+                  className="rounded-md border border-border px-3 py-1.5 text-xs uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                >
+                  Read steps aloud
+                </button>
+                <button
+                  onClick={() => void runAnalysis()}
+                  disabled={!live || thinking}
+                  className="rounded-md border border-border px-3 py-1.5 text-xs uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                >
+                  Check now
+                </button>
+              </div>
             </div>
 
             {error && (
@@ -422,6 +597,7 @@ function Index() {
         </section>
       </div>
       <canvas ref={canvasRef} className="hidden" />
+      <canvas ref={probeRef} className="hidden" />
     </main>
   );
 }
