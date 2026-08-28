@@ -109,6 +109,8 @@ function Index() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || busyRef.current || video.videoWidth === 0) return;
+    // backoff after a rate limit: skip ticks until the cooldown passes
+    if (Date.now() < cooldownRef.current) return;
     busyRef.current = true;
     setThinking(true);
     try {
