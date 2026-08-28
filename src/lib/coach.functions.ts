@@ -74,8 +74,25 @@ export const coachFrame = createServerFn({ method: "POST" })
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`AI_${res.status}: ${body.slice(0, 300)}`);
+      await res.text().catch(() => "");
+      return {
+        error:
+          res.status === 429 ? "rate_limited" : res.status === 402 ? "no_credits" : "failed",
+        game: data.knownGame ?? "Unknown",
+        confidence: 0,
+        location: "—",
+        stats: [],
+        objective: "—",
+        progress: "—",
+        steps: [],
+        action:
+          res.status === 429
+            ? "Busy — retrying shortly"
+            : res.status === 402
+              ? "Out of AI credits"
+              : "Couldn't read that frame",
+        danger: null,
+      };
     }
 
     const json = (await res.json()) as {
