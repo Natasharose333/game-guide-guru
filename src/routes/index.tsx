@@ -263,6 +263,17 @@ function Index() {
           </div>
         </header>
 
+        {live && (
+          <p className="mt-5 rounded-lg border border-accent/40 bg-accent/5 px-4 py-3 text-sm text-foreground/85">
+            <strong className="font-semibold text-accent">Click back into the Xbox app window now.</strong>{" "}
+            Your controller only reaches the game while that window has focus — if this
+            browser tab is focused, buttons like drawing a weapon get swallowed. Sidekick
+            keeps watching and talking in the background.
+          </p>
+        )}
+
+
+
         <section className="mt-8 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
           <div className="flex flex-col gap-5">
             <div className="overflow-hidden rounded-xl border border-border bg-card shadow-[var(--shadow-panel)]">
