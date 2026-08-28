@@ -129,12 +129,13 @@ function Index() {
     busyRef.current = true;
     setThinking(true);
     try {
-      const w = lowImpact ? 768 : 1024;
+      const w = lowImpact ? 640 : 1024;
       const h = Math.round((video.videoHeight / video.videoWidth) * w);
       canvas.width = w;
       canvas.height = h;
       canvas.getContext("2d")?.drawImage(video, 0, 0, w, h);
-      const frame = canvas.toDataURL("image/jpeg", lowImpact ? 0.55 : 0.7);
+      const frame = canvas.toDataURL("image/jpeg", lowImpact ? 0.5 : 0.7);
+
 
       const result = await analyze({
         data: { frame, knownGame: gameRef.current, recent: recentRef.current },
