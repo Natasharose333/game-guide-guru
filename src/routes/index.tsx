@@ -182,12 +182,18 @@ function Index() {
     }
   }, [analyze, lowImpact, speak, intervalSec]);
 
+  const tickRef = useRef(tick);
+  useEffect(() => {
+    tickRef.current = tick;
+  }, [tick]);
+
   useEffect(() => {
     if (!live) return;
-    void tick();
-    const id = setInterval(() => void tick(), intervalSec * 1000);
-    return () => clearInterval(id);
-  }, [live, intervalSec, tick]);
+    void tickRef.current();
+    // worker-driven so sampling keeps going while the Xbox app window has focus
+    return createBackgroundTimer(() => void tickRef.current(), intervalSec * 1000);
+  }, [live, intervalSec]);
+
 
   useEffect(() => () => stop(), [stop]);
 
