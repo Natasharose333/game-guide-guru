@@ -11,6 +11,8 @@ const CoachInput = z.object({
 });
 
 export type CoachResult = {
+  /** set when the gateway refused the call (rate limit / credits) */
+  error?: "rate_limited" | "no_credits" | "failed";
   game: string;
   confidence: number;
   location: string;
