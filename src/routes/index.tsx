@@ -69,11 +69,22 @@ function Index() {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         // 1 fps capture: enough for sampling, far cheaper on the GPU/encoder
-        video: { frameRate: { ideal: 1, max: 2 } },
+        video: { frameRate: { ideal: 1, max: 1 }, width: { max: 1280 } },
         audio: false,
       });
       streamRef.current = stream;
-      stream.getVideoTracks()[0]?.addEventListener("ended", () => stop());
+      const track = stream.getVideoTracks()[0];
+      track?.addEventListener("ended", () => stop());
+      // Force the capture pipeline down even if the picker ignored our hints —
+      // remote play already eats encode bandwidth on this laptop.
+      try {
+        await track?.applyConstraints({
+          frameRate: { max: 1 },
+          width: { max: lowImpact ? 960 : 1280 },
+        });
+      } catch {
+        /* constraint unsupported on this source */
+      }
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -82,7 +93,8 @@ function Index() {
     } catch {
       setError("Screen share was cancelled or blocked.");
     }
-  }, [stop]);
+  }, [stop, lowImpact]);
+
 
   const speak = useCallback(
     async (text: string) => {
