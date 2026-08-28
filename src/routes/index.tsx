@@ -39,6 +39,8 @@ function Index() {
   const recentRef = useRef<string[]>([]);
   const spokenRef = useRef<string>("");
   const voiceRef = useRef(true);
+  const cooldownRef = useRef(0);
+  const backoffRef = useRef(0);
 
   const [live, setLive] = useState(false);
   const [intervalSec, setIntervalSec] = useState(6);
