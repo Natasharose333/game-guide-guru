@@ -223,7 +223,7 @@ function Index() {
                 onChange={(e) => setIntervalSec(Number(e.target.value))}
                 className="ml-2 rounded-md border border-border bg-card px-2 py-1 text-sm text-foreground"
               >
-                {[3, 5, 6, 8, 12, 20, 30].map((s) => (
+                {[6, 8, 10, 15, 20, 30].map((s) => (
                   <option key={s} value={s}>
                     {s}s
                   </option>
