@@ -87,6 +87,7 @@ function Index() {
       spokenRef.current = text;
       try {
         const { audio } = await tts({ data: { text } });
+        if (!audio) throw new Error("no-audio");
         const el = audioRef.current ?? new Audio();
         audioRef.current = el;
         el.src = `data:audio/mpeg;base64,${audio}`;
