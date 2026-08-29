@@ -54,7 +54,9 @@ const PROBE_MS = 1200;
 function Index() {
   const analyze = useServerFn(coachFrame);
   const ask = useServerFn(askCoach);
+  const makePlan = useServerFn(planGoal);
   const tts = useServerFn(speakLine);
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const probeRef = useRef<HTMLCanvasElement | null>(null);
