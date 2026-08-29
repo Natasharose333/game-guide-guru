@@ -10,6 +10,8 @@ const CoachInput = z.object({
   recent: z.array(z.string()),
   /** optional player-defined goal that overrides the game's natural objective */
   goal: z.string().max(300).nullable().default(null),
+  /** ordered checklist titles for the custom goal, if one has been planned */
+  checklist: z.array(z.string()).default([]),
 });
 
 export type CoachResult = {
@@ -24,7 +26,16 @@ export type CoachResult = {
   steps: string[];
   action: string;
   danger: string | null;
+  /** 0-based index of the checklist step the player is on, when a checklist was sent */
+  stepIndex?: number | undefined;
 };
+
+export type GoalStep = {
+  title: string;
+  detail: string;
+  advanceSignal: string;
+};
+
 
 const SYSTEM = `You are a veteran player sitting next to someone on the couch. You have completed this game many times and you know its maps, quests, bosses, item locations, upgrade paths and optimal route by heart. The screenshot is only your window into WHERE they are — your advice comes from your knowledge of the whole game, not from describing the picture.
 
@@ -40,7 +51,7 @@ Absolute rules:
 - If you cannot identify the game with confidence, say so in "objective" and give a generic-but-useful next step.
 
 Reply ONLY with compact JSON, no markdown:
-{"game":string,"confidence":number 0-1,"location":area/level/quest name (max 10 words),"stats":[{"label":string,"value":string}] up to 6 HUD readings you can actually see,"objective":the required task right now (max 14 words),"progress":how far along, e.g. "2/5 relics" or "Act 2, ~40% through" (max 10 words),"steps":[2-4 short ordered steps to complete that task, from game knowledge],"action":ONE imperative next action right now (max 12 words),"danger":immediate threat or null}`;
+{"game":string,"confidence":number 0-1,"location":area/level/quest name (max 10 words),"stats":[{"label":string,"value":string}] up to 6 HUD readings you can actually see,"objective":the required task right now (max 14 words),"progress":how far along, e.g. "2/5 relics" or "Act 2, ~40% through" (max 10 words),"steps":[2-4 short ordered steps to complete that task, from game knowledge],"action":ONE imperative next action right now (max 12 words),"danger":immediate threat or null,"stepIndex":if a numbered CHECKLIST is given in the user message, the 0-based index of the step they are currently on, else 0}`;
 
 type GatewayFail = { status: number };
 
@@ -72,6 +83,12 @@ export const coachFrame = createServerFn({ method: "POST" })
       data.goal
         ? `PLAYER'S OWN GOAL (overrides the game's natural objective — plan toward this instead): ${data.goal}`
         : null,
+      data.checklist.length
+        ? `CHECKLIST for that goal (0-based): ${data.checklist
+            .map((s, i) => `${i}. ${s}`)
+            .join(" | ")}. Decide which step they are on and return it as stepIndex; keep "steps" focused on completing that step.`
+        : null,
+
     ]
       .filter(Boolean)
       .join(" ");
@@ -149,8 +166,77 @@ export const coachFrame = createServerFn({ method: "POST" })
       steps: Array.isArray(parsed.steps) ? parsed.steps.map(String).slice(0, 4) : [],
       action: parsed.action || "Keep going",
       danger: parsed.danger || null,
+      stepIndex:
+        typeof parsed.stepIndex === "number"
+          ? Math.max(0, Math.min(data.checklist.length - 1, Math.round(parsed.stepIndex)))
+          : undefined,
     };
   });
+
+const PlanInput = z.object({
+  goal: z.string().min(3).max(300),
+  knownGame: z.string().nullable(),
+  frame: z.string().min(32).nullable(),
+});
+
+const PLAN_SYSTEM = `You are a veteran player who has mastered the game on screen. The player gives you their own goal. Build a practical ordered checklist of 3-6 steps that gets them from where they are now to that goal, using real knowledge of the game: name actual places, NPCs, items, vendors, enemies and button prompts.
+
+For each step give:
+- "title": the step, imperative, max 8 words
+- "detail": how to actually do it, max 25 words, concrete
+- "advanceSignal": the on-screen cue or condition that means the step is done and they should move to the next one, max 12 words
+
+Reply ONLY with compact JSON, no markdown:
+{"steps":[{"title":string,"detail":string,"advanceSignal":string}]}`;
+
+/** Turns a free-form player goal into an ordered checklist with advance signals. */
+export const planGoal = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => PlanInput.parse(input))
+  .handler(
+    async ({ data }): Promise<{ steps: GoalStep[]; error?: CoachResult["error"] }> => {
+      const key = process.env["LOVABLE_API_KEY"];
+      if (!key) throw new Error("Missing LOVABLE_API_KEY");
+
+      const content: Array<Record<string, unknown>> = [
+        {
+          type: "text",
+          text: `Game: ${data.knownGame ?? "identify it from the screenshot"}. My goal: ${data.goal}`,
+        },
+      ];
+      if (data.frame) content.push({ type: "image_url", image_url: { url: data.frame } });
+
+      const res = await callGateway(key, {
+        model: "google/gemini-3.7-flash",
+        messages: [
+          { role: "system", content: PLAN_SYSTEM },
+          { role: "user", content },
+        ],
+      });
+
+      if (!res.ok) {
+        await res.text().catch(() => "");
+        return { steps: [], error: failKind({ status: res.status }) };
+      }
+
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const raw = json.choices?.[0]?.message?.content ?? "";
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return { steps: [], error: "failed" };
+      const parsed = JSON.parse(match[0]) as { steps?: Partial<GoalStep>[] };
+      const steps = (parsed.steps ?? [])
+        .filter((s) => s && typeof s.title === "string")
+        .slice(0, 6)
+        .map((s) => ({
+          title: String(s.title),
+          detail: String(s.detail ?? ""),
+          advanceSignal: String(s.advanceSignal ?? ""),
+        }));
+      return { steps };
+    },
+  );
+
 
 const AskInput = z.object({
   frame: z.string().min(32).nullable(),
