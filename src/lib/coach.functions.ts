@@ -166,8 +166,77 @@ export const coachFrame = createServerFn({ method: "POST" })
       steps: Array.isArray(parsed.steps) ? parsed.steps.map(String).slice(0, 4) : [],
       action: parsed.action || "Keep going",
       danger: parsed.danger || null,
+      stepIndex:
+        typeof parsed.stepIndex === "number"
+          ? Math.max(0, Math.min(data.checklist.length - 1, Math.round(parsed.stepIndex)))
+          : undefined,
     };
   });
+
+const PlanInput = z.object({
+  goal: z.string().min(3).max(300),
+  knownGame: z.string().nullable(),
+  frame: z.string().min(32).nullable(),
+});
+
+const PLAN_SYSTEM = `You are a veteran player who has mastered the game on screen. The player gives you their own goal. Build a practical ordered checklist of 3-6 steps that gets them from where they are now to that goal, using real knowledge of the game: name actual places, NPCs, items, vendors, enemies and button prompts.
+
+For each step give:
+- "title": the step, imperative, max 8 words
+- "detail": how to actually do it, max 25 words, concrete
+- "advanceSignal": the on-screen cue or condition that means the step is done and they should move to the next one, max 12 words
+
+Reply ONLY with compact JSON, no markdown:
+{"steps":[{"title":string,"detail":string,"advanceSignal":string}]}`;
+
+/** Turns a free-form player goal into an ordered checklist with advance signals. */
+export const planGoal = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => PlanInput.parse(input))
+  .handler(
+    async ({ data }): Promise<{ steps: GoalStep[]; error?: CoachResult["error"] }> => {
+      const key = process.env["LOVABLE_API_KEY"];
+      if (!key) throw new Error("Missing LOVABLE_API_KEY");
+
+      const content: Array<Record<string, unknown>> = [
+        {
+          type: "text",
+          text: `Game: ${data.knownGame ?? "identify it from the screenshot"}. My goal: ${data.goal}`,
+        },
+      ];
+      if (data.frame) content.push({ type: "image_url", image_url: { url: data.frame } });
+
+      const res = await callGateway(key, {
+        model: "google/gemini-3.7-flash",
+        messages: [
+          { role: "system", content: PLAN_SYSTEM },
+          { role: "user", content },
+        ],
+      });
+
+      if (!res.ok) {
+        await res.text().catch(() => "");
+        return { steps: [], error: failKind({ status: res.status }) };
+      }
+
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const raw = json.choices?.[0]?.message?.content ?? "";
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return { steps: [], error: "failed" };
+      const parsed = JSON.parse(match[0]) as { steps?: Partial<GoalStep>[] };
+      const steps = (parsed.steps ?? [])
+        .filter((s) => s && typeof s.title === "string")
+        .slice(0, 6)
+        .map((s) => ({
+          title: String(s.title),
+          detail: String(s.detail ?? ""),
+          advanceSignal: String(s.advanceSignal ?? ""),
+        }));
+      return { steps };
+    },
+  );
+
 
 const AskInput = z.object({
   frame: z.string().min(32).nullable(),
