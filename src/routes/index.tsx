@@ -86,6 +86,12 @@ function Index() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
+  const [plan, setPlan] = useState<GoalStep[]>([]);
+  const [planGoalText, setPlanGoalText] = useState("");
+  const [stepIdx, setStepIdx] = useState(0);
+  const [planning, setPlanning] = useState(false);
+  const planRef = useRef<GoalStep[]>([]);
+  const stepIdxRef = useRef(0);
 
   useEffect(() => {
     voiceRef.current = voice;
@@ -93,6 +99,13 @@ function Index() {
   useEffect(() => {
     goalRef.current = goal.trim();
   }, [goal]);
+  useEffect(() => {
+    planRef.current = plan;
+  }, [plan]);
+  useEffect(() => {
+    stepIdxRef.current = stepIdx;
+  }, [stepIdx]);
+
 
   const stop = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
