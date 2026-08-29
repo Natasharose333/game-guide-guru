@@ -318,6 +318,52 @@ function Index() {
 
   useEffect(() => () => stop(), [stop]);
 
+  const buildPlan = useCallback(async () => {
+    const g = goal.trim();
+    if (g.length < 3 || planning) return;
+    setPlanning(true);
+    setError(null);
+    try {
+      const res = await makePlan({
+        data: { goal: g, knownGame: gameRef.current, frame: grabFrame() },
+      });
+      if (res.error || res.steps.length === 0) {
+        setError(
+          res.error === "rate_limited"
+            ? "Rate limited — try planning again in a few seconds."
+            : res.error === "no_credits"
+              ? "Out of AI credits."
+              : "Couldn't build a checklist for that goal.",
+        );
+        return;
+      }
+      setPlan(res.steps);
+      planRef.current = res.steps;
+      setPlanGoalText(g);
+      setStepIdx(0);
+      stepIdxRef.current = 0;
+      const first = res.steps[0]!;
+      spokenRef.current = "";
+      void speak(
+        `Step 1. ${first.title}. ${first.detail} Move on when ${first.advanceSignal}.`,
+      );
+    } catch {
+      setError("Couldn't reach the coach to plan that goal.");
+    } finally {
+      setPlanning(false);
+    }
+  }, [goal, planning, makePlan, grabFrame, speak]);
+
+  const clearPlan = useCallback(() => {
+    setPlan([]);
+    planRef.current = [];
+    setStepIdx(0);
+    stepIdxRef.current = 0;
+    setPlanGoalText("");
+  }, []);
+
+
+
   const submitQuestion = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
