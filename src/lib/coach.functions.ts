@@ -83,6 +83,12 @@ export const coachFrame = createServerFn({ method: "POST" })
       data.goal
         ? `PLAYER'S OWN GOAL (overrides the game's natural objective — plan toward this instead): ${data.goal}`
         : null,
+      data.checklist.length
+        ? `CHECKLIST for that goal (0-based): ${data.checklist
+            .map((s, i) => `${i}. ${s}`)
+            .join(" | ")}. Decide which step they are on and return it as stepIndex; keep "steps" focused on completing that step.`
+        : null,
+
     ]
       .filter(Boolean)
       .join(" ");
