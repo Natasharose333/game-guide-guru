@@ -201,8 +201,10 @@ function Index() {
           knownGame: gameRef.current,
           recent: recentRef.current,
           goal: goalRef.current || null,
+          checklist: planRef.current.map((s) => s.title),
         },
       });
+
 
       if (result.error) {
         if (result.error === "rate_limited") {
