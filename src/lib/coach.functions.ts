@@ -51,7 +51,7 @@ Absolute rules:
 - If you cannot identify the game with confidence, say so in "objective" and give a generic-but-useful next step.
 
 Reply ONLY with compact JSON, no markdown:
-{"game":string,"confidence":number 0-1,"location":area/level/quest name (max 10 words),"stats":[{"label":string,"value":string}] up to 6 HUD readings you can actually see,"objective":the required task right now (max 14 words),"progress":how far along, e.g. "2/5 relics" or "Act 2, ~40% through" (max 10 words),"steps":[2-4 short ordered steps to complete that task, from game knowledge],"action":ONE imperative next action right now (max 12 words),"danger":immediate threat or null}`;
+{"game":string,"confidence":number 0-1,"location":area/level/quest name (max 10 words),"stats":[{"label":string,"value":string}] up to 6 HUD readings you can actually see,"objective":the required task right now (max 14 words),"progress":how far along, e.g. "2/5 relics" or "Act 2, ~40% through" (max 10 words),"steps":[2-4 short ordered steps to complete that task, from game knowledge],"action":ONE imperative next action right now (max 12 words),"danger":immediate threat or null,"stepIndex":if a numbered CHECKLIST is given in the user message, the 0-based index of the step they are currently on, else 0}`;
 
 type GatewayFail = { status: number };
 
