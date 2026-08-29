@@ -239,7 +239,25 @@ function Index() {
         ].slice(0, 40),
       );
       setError(null);
+
+      const steps = planRef.current;
+      if (steps.length && typeof result.stepIndex === "number") {
+        const next = Math.max(stepIdxRef.current, result.stepIndex);
+        if (next !== stepIdxRef.current) {
+          stepIdxRef.current = next;
+          setStepIdx(next);
+          const s = steps[next];
+          if (s) {
+            spokenRef.current = "";
+            void speak(
+              `Step ${next + 1}. ${s.title}. ${s.detail} Move on when ${s.advanceSignal}.`,
+            );
+            return;
+          }
+        }
+      }
       void speak(result.danger ? `${result.danger}. ${result.action}` : result.action);
+
     } catch {
       setError("Couldn't reach the coach. Retrying on the next change.");
     } finally {
