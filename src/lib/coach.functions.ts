@@ -27,7 +27,7 @@ export type CoachResult = {
   action: string;
   danger: string | null;
   /** 0-based index of the checklist step the player is on, when a checklist was sent */
-  stepIndex?: number;
+  stepIndex?: number | undefined;
 };
 
 export type GoalStep = {
