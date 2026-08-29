@@ -10,6 +10,8 @@ const CoachInput = z.object({
   recent: z.array(z.string()),
   /** optional player-defined goal that overrides the game's natural objective */
   goal: z.string().max(300).nullable().default(null),
+  /** ordered checklist titles for the custom goal, if one has been planned */
+  checklist: z.array(z.string()).default([]),
 });
 
 export type CoachResult = {
@@ -24,7 +26,16 @@ export type CoachResult = {
   steps: string[];
   action: string;
   danger: string | null;
+  /** 0-based index of the checklist step the player is on, when a checklist was sent */
+  stepIndex?: number;
 };
+
+export type GoalStep = {
+  title: string;
+  detail: string;
+  advanceSignal: string;
+};
+
 
 const SYSTEM = `You are a veteran player sitting next to someone on the couch. You have completed this game many times and you know its maps, quests, bosses, item locations, upgrade paths and optimal route by heart. The screenshot is only your window into WHERE they are — your advice comes from your knowledge of the whole game, not from describing the picture.
 
