@@ -535,7 +535,117 @@ function Index() {
                   Coaching toward your goal instead of the default objective.
                 </p>
               )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  onClick={() => void buildPlan()}
+                  disabled={planning || goal.trim().length < 3}
+                  className="font-display rounded-md bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-widest text-primary-foreground disabled:opacity-40"
+                >
+                  {planning
+                    ? "Planning…"
+                    : plan.length
+                      ? "Re-plan checklist"
+                      : "Build checklist"}
+                </button>
+                {plan.length > 0 && (
+                  <button
+                    onClick={clearPlan}
+                    className="rounded-md border border-border px-3 py-2 text-xs uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {plan.length > 0 && planGoalText !== goal.trim() && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Goal changed — re-plan to update the checklist.
+                </p>
+              )}
             </div>
+
+            {plan.length > 0 && (
+              <div className="rounded-xl border border-accent/40 bg-card p-5 shadow-[var(--shadow-panel)]">
+                <div className="flex items-center justify-between">
+                  <p className="font-display text-xs uppercase tracking-[0.3em] text-accent">
+                    goal checklist
+                  </p>
+                  <span className="text-xs text-muted-foreground">
+                    step {Math.min(stepIdx + 1, plan.length)} of {plan.length}
+                  </span>
+                </div>
+                <ol className="mt-4 space-y-3">
+                  {plan.map((s, i) => {
+                    const done = i < stepIdx;
+                    const active = i === stepIdx;
+                    return (
+                      <li
+                        key={s.title}
+                        className={`rounded-lg border px-3 py-2.5 ${
+                          active
+                            ? "border-accent/60 bg-accent/10"
+                            : "border-border bg-background/40"
+                        }`}
+                      >
+                        <div className="flex gap-2">
+                          <span
+                            className={`font-mono text-xs ${done ? "text-muted-foreground" : "text-accent"}`}
+                          >
+                            {done ? "✓" : i + 1}
+                          </span>
+                          <div className="flex-1">
+                            <p
+                              className={`text-sm font-semibold ${
+                                done
+                                  ? "text-muted-foreground line-through"
+                                  : "text-foreground"
+                              }`}
+                            >
+                              {s.title}
+                            </p>
+                            {active && (
+                              <p className="mt-1 text-sm text-foreground/90">
+                                <span className="text-xs uppercase tracking-widest text-accent">
+                                  do now ·{" "}
+                                </span>
+                                {s.detail}
+                              </p>
+                            )}
+                            {!done && s.advanceSignal && (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                advance when: {s.advanceSignal}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      const s = plan[stepIdx];
+                      if (!s) return;
+                      spokenRef.current = "";
+                      void speak(
+                        `Step ${stepIdx + 1}. ${s.title}. ${s.detail} Move on when ${s.advanceSignal}.`,
+                      );
+                    }}
+                    className="rounded-md border border-border px-3 py-1.5 text-xs uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    Read step aloud
+                  </button>
+                  <button
+                    onClick={() => setStepIdx((i) => Math.min(plan.length - 1, i + 1))}
+                    disabled={stepIdx >= plan.length - 1}
+                    className="rounded-md border border-border px-3 py-1.5 text-xs uppercase tracking-widest text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                  >
+                    Mark done · next step
+                  </button>
+                </div>
+              </div>
+            )}
+
 
             <div className="rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-panel)]">
               <p className="font-display text-xs uppercase tracking-[0.3em] text-muted-foreground">
